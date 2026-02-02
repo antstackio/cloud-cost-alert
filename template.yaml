@@ -1,0 +1,203 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: AWS Cost Monitoring and Forecasting System - Sends weekly and monthly cost reports to Slack
+
+Parameters:
+  SlackWebhookUrl:
+    Type: String
+    Description: Slack Incoming Webhook URL for notifications
+    NoEcho: true
+  MonthlyBudget:
+    Type: Number
+    Description: Monthly budget threshold in USD for comparison
+    Default: 500
+  AnomalyThreshold:
+    Type: Number
+    Description: Percentage increase threshold to flag as anomaly
+    Default: 20
+  TopServicesCount:
+    Type: Number
+    Description: Number of top services to include in the report
+    Default: 10
+  Environment:
+    Type: String
+    Description: Deployment environment (e.g., dev, prod)
+    Default: dev
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Timeout: 300
+    MemorySize: 512
+    Architectures:
+      - arm64
+
+Resources:
+  CostReporterFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub cost-reporter-${Environment}
+      Handler: cost-reporter.handler
+      CodeUri: dist/
+      Description: Generates weekly and monthly AWS cost reports
+      Environment:
+        Variables:
+          SLACK_WEBHOOK_URL: !Ref SlackWebhookUrl
+          MONTHLY_BUDGET: !Ref MonthlyBudget
+          ANOMALY_THRESHOLD: !Ref AnomalyThreshold
+          TOP_SERVICES_COUNT: !Ref TopServicesCount
+          REGION: !Ref "AWS::Region"
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Sid: CostExplorerAccess
+              Effect: Allow
+              Action:
+                - ce:GetCostAndUsage
+                - ce:GetCostForecast
+              Resource: "*"
+            - Sid: CloudWatchMetricsAccess
+              Effect: Allow
+              Action:
+                - cloudwatch:GetMetricStatistics
+                - cloudwatch:GetMetricData
+              Resource: "*"
+            - Sid: EC2DescribeAccess
+              Effect: Allow
+              Action:
+                - ec2:DescribeInstances
+                - ec2:DescribeVolumes
+                - ec2:DescribeRegions
+                - ec2:DescribeAddresses
+                - ec2:DescribeNatGateways
+              Resource: "*"
+            - Sid: RDSDescribeAccess
+              Effect: Allow
+              Action:
+                - rds:DescribeDBInstances
+              Resource: "*"
+            - Sid: ELBDescribeAccess
+              Effect: Allow
+              Action:
+                - elasticloadbalancing:DescribeLoadBalancers
+              Resource: "*"
+            - Sid: EFSDescribeAccess
+              Effect: Allow
+              Action:
+                - elasticfilesystem:DescribeFileSystems
+              Resource: "*"
+            - Sid: EKSDescribeAccess
+              Effect: Allow
+              Action:
+                - eks:ListClusters
+                - eks:DescribeCluster
+              Resource: "*"
+            - Sid: ECSDescribeAccess
+              Effect: Allow
+              Action:
+                - ecs:ListClusters
+                - ecs:ListServices
+                - ecs:DescribeServices
+              Resource: "*"
+            - Sid: ElastiCacheDescribeAccess
+              Effect: Allow
+              Action:
+                - elasticache:DescribeCacheClusters
+              Resource: "*"
+            - Sid: RedshiftDescribeAccess
+              Effect: Allow
+              Action:
+                - redshift:DescribeClusters
+              Resource: "*"
+            - Sid: OpenSearchDescribeAccess
+              Effect: Allow
+              Action:
+                - es:ListDomainNames
+                - es:DescribeDomain
+              Resource: "*"
+
+  CostReporterFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${CostReporterFunction}-${Environment}
+      RetentionInDays: 30
+
+  WeeklyReportScheduleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeLambdaPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt CostReporterFunction.Arn
+
+  WeeklyReportSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: !Sub cost-reporter-weekly-${Environment}
+      Description: Triggers weekly cost report every Monday at 9:00 AM IST
+      ScheduleExpression: cron(30 3 ? * MON *)
+      ScheduleExpressionTimezone: UTC
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      Target:
+        Arn: !GetAtt CostReporterFunction.Arn
+        RoleArn: !GetAtt WeeklyReportScheduleRole.Arn
+        Input: '{"type": "weekly"}'
+
+  MonthlyReportScheduleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeLambdaPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt CostReporterFunction.Arn
+
+  MonthlyReportSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: !Sub cost-reporter-monthly-${Environment}
+      Description: Triggers monthly cost forecast on 1st of every month at 10:00 AM IST
+      ScheduleExpression: cron(30 4 1 * ? *)
+      ScheduleExpressionTimezone: UTC
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      Target:
+        Arn: !GetAtt CostReporterFunction.Arn
+        RoleArn: !GetAtt MonthlyReportScheduleRole.Arn
+        Input: '{"type": "monthly"}'
+
+Outputs:
+  CostReporterFunctionArn:
+    Description: Cost Reporter Lambda Function ARN
+    Value: !GetAtt CostReporterFunction.Arn
+  CostReporterFunctionName:
+    Description: Cost Reporter Lambda Function Name
+    Value: !Ref CostReporterFunction
+  WeeklyScheduleArn:
+    Description: Weekly Report Schedule ARN
+    Value: !GetAtt WeeklyReportSchedule.Arn
+  MonthlyScheduleArn:
+    Description: Monthly Report Schedule ARN
+    Value: !GetAtt MonthlyReportSchedule.Arn

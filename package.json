@@ -1,0 +1,38 @@
+{
+  "name": "cloud-cost-alerts",
+  "version": "1.0.0",
+  "description": "AWS Cost Monitoring and Forecasting System",
+  "main": "dist/handlers/cost-reporter.js",
+  "scripts": {
+    "build": "esbuild src/handlers/cost-reporter.ts --bundle --platform=node --target=node20 --outfile=dist/cost-reporter.js --external:@aws-sdk/*",
+    "build:watch": "npm run build -- --watch",
+    "clean": "rm -rf dist",
+    "test:weekly": "sam local invoke CostReporterFunction -e events/weekly.json --env-vars env.json",
+    "test:monthly": "sam local invoke CostReporterFunction -e events/monthly.json --env-vars env.json",
+    "deploy": "npm run build && sam deploy --config-env dev",
+    "deploy:prod": "npm run build && sam deploy --config-env prod",
+    "deploy:guided": "npm run build && sam deploy --guided"
+  },
+  "dependencies": {
+    "@aws-sdk/client-cloudwatch": "^3.500.0",
+    "@aws-sdk/client-cost-explorer": "^3.500.0",
+    "@aws-sdk/client-ec2": "^3.500.0",
+    "@aws-sdk/client-ecs": "^3.500.0",
+    "@aws-sdk/client-efs": "^3.500.0",
+    "@aws-sdk/client-eks": "^3.500.0",
+    "@aws-sdk/client-elastic-load-balancing-v2": "^3.500.0",
+    "@aws-sdk/client-elasticache": "^3.500.0",
+    "@aws-sdk/client-opensearch": "^3.500.0",
+    "@aws-sdk/client-rds": "^3.500.0",
+    "@aws-sdk/client-redshift": "^3.500.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.131",
+    "@types/node": "^20.11.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

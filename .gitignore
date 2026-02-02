@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Build output
+dist/
+.aws-sam/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+env.json
+
+# Logs
+*.log
+npm-debug.log*
+
+# SAM
+samconfig.toml
+
+# TypeScript
+*.tsbuildinfo
+.claude
+
+# .md files
+CLAUDE.md
+PLAN.md
