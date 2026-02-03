@@ -14,6 +14,10 @@ Parameters:
     Type: String
     Description: Name of the IAM role to create (must match CrossAccountRoleName in the main template)
     Default: CostAlertsReadRole
+  Environment:
+    Type: String
+    Description: Deployment environment (e.g., dev, prod)
+    Default: dev
 
 Resources:
   CostAlertsReadRole:
@@ -30,7 +34,7 @@ Resources:
             Condition:
               StringLike:
                 aws:PrincipalArn:
-                  - !Sub "arn:aws:iam::${ManagementAccountId}:role/cloud-cost-alerts-CostReporterFunctionRole-*"
+                  - !Sub "arn:aws:iam::${ManagementAccountId}:role/cloud-cost-alerts-${Environment}-CostReporterFunctionRole-*"
       Policies:
         - PolicyName: CostAlertsReadPolicy
           PolicyDocument:
