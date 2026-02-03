@@ -1,37 +1,48 @@
-# Cloud Cost Alerts 📊
+# Cloud Cost Alerts
 
-A **serverless AWS cost monitoring system** that automatically sends weekly and monthly cost reports to Slack, helping teams proactively track spending and detect anomalies.
+A **serverless AWS cost monitoring system** that automatically sends weekly and monthly cost reports to Slack, detects unused resources across multiple AWS services and regions, and supports organization-mode scanning with cost aggregation across linked AWS accounts.
 
 ## Features
 
-✨ **Automated Cost Reporting**
-- Weekly AWS cost summaries (Monday mornings)
-- Monthly cost forecasts and budget comparisons
+**Automated Cost Reporting**
+- Weekly AWS cost summaries (every Monday at 9:00 AM IST)
+- Monthly cost forecasts and budget comparisons (1st of each month at 10:00 AM IST)
 - Top spending services highlighted
-- Cost anomaly detection
+- Cost anomaly detection with configurable thresholds
 
-🔔 **Slack Notifications**
-- Beautiful, formatted cost reports
+**Unused Resource Detection**
+- Scans 17 AWS regions for idle or unused resources
+- Detects low-CPU EC2 instances, unattached EBS volumes, orphaned snapshots
+- Identifies idle RDS instances, load balancers with no traffic, unattached Elastic IPs
+- Checks NAT Gateways, EFS, EKS, ECS, ElastiCache, Redshift, and OpenSearch
+- Flags old/orphaned EBS snapshots, RDS snapshots, and EFS backups
+
+**Organization Mode (Multi-Account)**
+- Supports scanning multiple AWS accounts via STS AssumeRole
+- Configurable linked accounts (comma-separated account IDs)
+- Cost data grouped by linked account and service in organization mode
+- Includes a ready-to-deploy CloudFormation template for the cross-account IAM role
+- Falls back to single-account mode when no child accounts are configured
+
+**Slack Notifications**
+- Native Slack Block Kit tables for rich formatting
+- Separate cost report and unused resources messages
 - Budget threshold alerts
-- Anomaly warnings
+- Organization mode shows account IDs per service/resource
 
-⚡ **Serverless & Cost-Effective**
-- Runs on AWS Lambda with minimal overhead
-- EventBridge for scheduling
+**Serverless & Cost-Effective**
+- Single Lambda function handles both weekly and monthly reports
+- EventBridge Scheduler for cron-based triggers
 - Near-zero infrastructure cost
 - No databases or persistent storage required
-
-🏗️ **Low Maintenance**
-- Single Lambda function handles both weekly and monthly reports
 - Infrastructure as Code using AWS SAM
-- Easy to deploy and configure
 
 ## Prerequisites
 
-- **AWS Account** with appropriate permissions
+- **AWS Account** with Cost Explorer enabled
 - **Node.js 20.x** or higher
 - **AWS SAM CLI** installed ([Installation Guide](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html))
-- **Slack Workspace** with webhook integration
+- **Slack Workspace** with an incoming webhook
 
 ## Quick Start
 
@@ -79,13 +90,18 @@ npm run deploy
 
 ## Environment Variables
 
-| Variable             | Description                                 | Default       |
-| -------------------- | ------------------------------------------- | ------------- |
-| `SLACK_WEBHOOK_URL`  | Slack incoming webhook URL                  | Required      |
-| `MONTHLY_BUDGET`     | Monthly budget threshold (USD)              | 500           |
-| `ANOMALY_THRESHOLD`  | Cost increase threshold to flag anomaly (%) | 20            |
-| `TOP_SERVICES_COUNT` | Number of top services to include in report | 10            |
-| `REGION`             | AWS region                                  | Auto-detected |
+| Variable                   | Description                                          | Default              |
+| -------------------------- | ---------------------------------------------------- | -------------------- |
+| `SLACK_WEBHOOK_URL`        | Slack incoming webhook URL                           | Required             |
+| `MONTHLY_BUDGET`           | Monthly budget threshold (USD)                       | 500                  |
+| `ANOMALY_THRESHOLD`        | Cost increase threshold to flag anomaly (%)          | 20                   |
+| `TOP_SERVICES_COUNT`       | Number of top services to include in report          | 10                   |
+| `UNUSED_SERVICES_COUNT`    | Number of unused resources to show in report         | 50                   |
+| `SNAPSHOT_AGE_THRESHOLD_DAYS` | Days after which a snapshot is flagged as old      | 90                   |
+| `CHILD_ACCOUNTS`           | Comma-separated child account IDs                    | Empty (single-account) |
+| `CROSS_ACCOUNT_ROLE_NAME`  | IAM role name to assume in child accounts            | CostAlertsReadRole   |
+| `ENABLE_ORGANIZATION_MODE` | Whether to run in organization mode (true/false)     | true                 |
+| `REGION`                   | AWS region                                           | Auto-detected        |
 
 ## Project Structure
 
@@ -97,15 +113,16 @@ cloud-cost-alerts/
 │   ├── services/
 │   │   ├── cost-explorer.ts          # AWS Cost Explorer API integration
 │   │   ├── slack.ts                  # Slack notification service
-│   │   └── unused-resources.ts       # Unused resource detection
+│   │   └── unused-resources.ts       # Unused resource detection (multi-region, multi-account)
 │   ├── utils/
 │   │   ├── date-utils.ts             # Date manipulation helpers
 │   │   └── formatter.ts              # Message formatting utilities
 │   └── types/
 │       └── index.ts                  # TypeScript type definitions
 ├── events/
-│   ├── weekly.json                   # Weekly report event
-│   └── monthly.json                  # Monthly report event
+│   ├── weekly.json                   # Weekly report test event
+│   └── monthly.json                  # Monthly report test event
+├── cross-account-role.yaml           # CloudFormation template for child account IAM role
 ├── template.yaml                     # AWS SAM CloudFormation template
 ├── samconfig.toml                    # SAM deployment config
 ├── package.json                      # Dependencies
@@ -154,7 +171,7 @@ npm run deploy:guided
 
 ### Scheduling
 
-The system uses **EventBridge** for serverless scheduling:
+The system uses **EventBridge Scheduler** for cron-based triggers:
 
 | Schedule | Cron Expression        | Purpose                      |
 | -------- | ---------------------- | ---------------------------- |
@@ -168,24 +185,87 @@ EventBridge (Scheduler)
     ↓
 Lambda Function
     ↓
-AWS Cost Explorer API
+  ┌─────────────────────────────┐
+  │  AWS Cost Explorer API      │  ← cost data & forecasts
+  │  CloudWatch Metrics         │  ← resource utilization
+  │  AWS Service APIs (EC2,     │  ← resource inventory
+  │    RDS, ELB, EKS, ECS...)  │
+  │  STS AssumeRole (optional)  │  ← cross-account access
+  └─────────────────────────────┘
     ↓
 Slack Notification
 ```
 
 ### Report Contents
 
-**Weekly Report:**
-- Total spending for the past 7 days
-- Top 10 services by cost
-- Comparison with previous week
-- Anomaly detection alerts
+**Weekly Report** (sent as two Slack messages):
+1. Cost report: total spending, top services breakdown with forecasts and week-over-week trends, anomaly detection
+2. Unused resources report: idle/unused resources detected across all regions
 
-**Monthly Report:**
-- Month-to-date spending
-- Cost forecast for end of month
-- Budget comparison
-- Top services breakdown
+**Monthly Report** (sent as two Slack messages):
+1. Cost report: month-to-date spending, forecasted total, budget comparison, top services with daily averages
+2. Unused resources report: idle/unused resources detected across all regions
+
+In organization mode, both reports include account IDs alongside each service and resource entry.
+
+### Unused Resource Detection
+
+The system scans 17 AWS regions (in batches of 4 for performance) and checks the following resources using CloudWatch metrics:
+
+| Resource Type       | Detection Criteria                            |
+| ------------------- | --------------------------------------------- |
+| EC2 Instances       | CPU < 5% avg or no network traffic            |
+| EBS Volumes         | Unattached or zero I/O operations             |
+| EBS Snapshots       | Orphaned (source volume deleted) or old (90d+)|
+| RDS Instances       | No connections or CPU < 5% avg                |
+| RDS Snapshots       | Orphaned (source DB deleted) or old (90d+)    |
+| RDS Cluster Snapshots | Orphaned (source cluster deleted) or old    |
+| EFS Backups         | Orphaned (source EFS deleted) or old (90d+)   |
+| Load Balancers      | No traffic (ALB/NLB)                          |
+| Elastic IPs         | Not associated with any instance              |
+| NAT Gateways        | No outbound traffic                           |
+| EFS File Systems    | No client connections                         |
+| EKS Clusters        | No nodes or CPU < 5% avg                      |
+| ECS Services        | No running tasks or CPU < 5% avg              |
+| ElastiCache         | No connections or CPU < 5% avg                |
+| Redshift Clusters   | No connections or CPU < 5% avg                |
+| OpenSearch Domains  | No search requests or CPU < 5% avg            |
+
+## Organization Mode (Multi-Account Setup)
+
+To scan resources and aggregate costs across multiple AWS accounts:
+
+### 1. Deploy the cross-account role in each child account
+
+Use the provided `cross-account-role.yaml` template:
+
+```bash
+aws cloudformation deploy \
+  --template-file cross-account-role.yaml \
+  --stack-name cost-alerts-read-role \
+  --parameter-overrides ManagementAccountId=<YOUR_PARENT_ACCOUNT_ID> \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --region us-east-1
+```
+
+### 2. Configure child accounts
+
+Add the `CHILD_ACCOUNTS` parameter during deployment with comma-separated account IDs:
+
+```bash
+# In samconfig.toml parameter_overrides, add:
+ChildAccounts="123456789012,987654321098"
+```
+
+Or pass it via SAM deploy:
+
+```bash
+sam deploy --parameter-overrides \
+  ChildAccounts="123456789012,987654321098" \
+  SlackWebhookUrl="https://hooks.slack.com/services/..."
+```
+
+Organization mode is automatically enabled when `CHILD_ACCOUNTS` is configured with at least one account ID. In this mode, cost data is grouped by linked account and service, and unused resource reports include account IDs.
 
 ## Local Testing
 
@@ -199,7 +279,7 @@ npm run test:weekly
 npm run test:monthly
 ```
 
-Make sure you have the AWS credentials configured and `env.json` properly set up.
+Make sure you have AWS credentials configured and `env.json` properly set up.
 
 ## Slack Webhook Setup
 
@@ -210,28 +290,30 @@ Make sure you have the AWS credentials configured and `env.json` properly set up
 
 [Learn more about Slack webhooks](https://api.slack.com/messaging/webhooks)
 
-## Permissions Required
+## IAM Permissions
 
-The Lambda function requires the following AWS IAM permissions:
+The Lambda function requires the following AWS IAM permissions (all configured in `template.yaml`):
 
-- `ce:GetCostAndUsage` - Retrieve cost data
-- `ce:GetCostForecast` - Get cost forecasts
-- `cloudwatch:GetMetricStatistics` - CloudWatch metrics
-- `ec2:Describe*` - EC2 resource inspection
-- `rds:DescribeDBInstances` - RDS resource inspection
-- `elasticloadbalancing:DescribeLoadBalancers` - ELB resource inspection
-- `elasticfilesystem:DescribeFileSystems` - EFS resource inspection
-- `eks:ListClusters` - EKS cluster inspection
-- `ecs:ListClusters` - ECS cluster inspection
-
-All permissions are configured in `template.yaml` with principle of least privilege.
+- **Cost Explorer**: `ce:GetCostAndUsage`, `ce:GetCostForecast`
+- **STS**: `sts:GetCallerIdentity`, `sts:AssumeRole` (for organization mode cross-account access)
+- **CloudWatch**: `cloudwatch:GetMetricStatistics`, `cloudwatch:GetMetricData`
+- **EC2**: `ec2:DescribeInstances`, `ec2:DescribeVolumes`, `ec2:DescribeRegions`, `ec2:DescribeAddresses`, `ec2:DescribeNatGateways`, `ec2:DescribeSnapshots`
+- **RDS**: `rds:DescribeDBInstances`, `rds:DescribeDBSnapshots`, `rds:DescribeDBClusters`, `rds:DescribeDBClusterSnapshots`
+- **ELB**: `elasticloadbalancing:DescribeLoadBalancers`
+- **EFS**: `elasticfilesystem:DescribeFileSystems`
+- **EKS**: `eks:ListClusters`, `eks:DescribeCluster`
+- **ECS**: `ecs:ListClusters`, `ecs:ListServices`, `ecs:DescribeServices`
+- **ElastiCache**: `elasticache:DescribeCacheClusters`
+- **Redshift**: `redshift:DescribeClusters`
+- **OpenSearch**: `es:ListDomainNames`, `es:DescribeDomain`
+- **AWS Backup**: `backup:ListBackupVaults`, `backup:ListRecoveryPointsByBackupVault`
 
 ## Cost Considerations
 
 This solution is designed to be extremely cost-effective:
 
-- **Lambda**: ~0.20 USD/month (free tier included)
-- **EventBridge**: ~0.10 USD/month (free tier included)
+- **Lambda**: ~$0.20/month (free tier eligible)
+- **EventBridge**: ~$0.10/month (free tier eligible)
 - **Cost Explorer API**: Free (included with AWS)
 - **Total**: Essentially free on AWS free tier
 
@@ -258,24 +340,34 @@ This solution is designed to be extremely cost-effective:
 2. Verify Lambda has `ce:GetCostAndUsage` permissions
 3. Cost data takes ~24 hours to appear in Cost Explorer
 
+### Organization Mode / Cross-Account Failures
+
+1. Verify the cross-account role exists in the child account
+2. Check that the role trust policy references the correct parent account ID
+3. Ensure the `CROSS_ACCOUNT_ROLE_NAME` matches the deployed role name
+4. Verify `CHILD_ACCOUNTS` uses comma-separated account IDs (e.g., `123456789012,987654321098`)
+5. Review Lambda logs for `AssumeRole` errors
+
 ## Configuration Examples
 
-### High-Cost Environment Alert
+### Single Account (Default)
 
-```json
-{
-  "MONTHLY_BUDGET": "1000",
-  "ANOMALY_THRESHOLD": "10"
-}
+```
+# samconfig.toml parameter_overrides
+MonthlyBudget="500" AnomalyThreshold="20" TopServicesCount="10"
 ```
 
-### Development Environment (Relaxed Alerts)
+### Multi-Account Organization
 
-```json
-{
-  "MONTHLY_BUDGET": "100",
-  "ANOMALY_THRESHOLD": "50"
-}
+```
+# samconfig.toml parameter_overrides
+MonthlyBudget="5000" AnomalyThreshold="15" TopServicesCount="10" ChildAccounts="111111111111,222222222222,333333333333"
+```
+
+### Strict Anomaly Detection
+
+```
+MonthlyBudget="1000" AnomalyThreshold="10" SnapshotAgeThresholdDays="30"
 ```
 
 ## AWS SAM Commands Reference
@@ -285,7 +377,7 @@ This solution is designed to be extremely cost-effective:
 sam logs -n CostReporterFunction
 
 # Invoke function directly
-sam local invoke CostReporterFunction -e events/weekly.json
+sam local invoke CostReporterFunction -e events/weekly.json --env-vars env.json
 
 # Delete stack
 sam delete
@@ -293,7 +385,7 @@ sam delete
 
 ## License
 
-MIT License - see LICENSE file for details
+MIT License - see LICENSE file for details.
 
 ## Support
 

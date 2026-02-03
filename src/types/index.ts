@@ -7,6 +7,13 @@ export interface ServiceCost {
   cost: number;
   forecast?: number;
   region?: string;
+  accountId?: string;
+  accountName?: string;
+}
+
+export interface CostQueryOptions {
+  includeForecasts?: boolean;
+  groupByAccount?: boolean;
 }
 
 export interface UnusedResource {
@@ -16,6 +23,14 @@ export interface UnusedResource {
   region: string;
   cost: number;
   reason: string; // e.g., "Low CPU (<5%)", "Zero connections", "No requests"
+  accountId?: string;
+  accountName?: string;
+}
+
+export interface AwsCredentials {
+  accessKeyId: string;
+  secretAccessKey: string;
+  sessionToken?: string;
 }
 
 export interface CostData {
@@ -24,6 +39,8 @@ export interface CostData {
   startDate: string;
   endDate: string;
   unusedResources?: UnusedResource[];
+  isOrganizationMode?: boolean;
+  accountCount?: number;
 }
 
 export interface WeeklyReportData {
@@ -31,6 +48,8 @@ export interface WeeklyReportData {
   previousWeek: CostData;
   percentChange: number;
   isAnomaly: boolean;
+  accountId: string;
+  isOrganizationMode?: boolean;
 }
 
 export interface MonthlyReportData {
@@ -40,6 +59,8 @@ export interface MonthlyReportData {
   isOverBudget: boolean;
   month: string;
   year: number;
+  accountId: string;
+  isOrganizationMode?: boolean;
 }
 
 export interface DateRange {

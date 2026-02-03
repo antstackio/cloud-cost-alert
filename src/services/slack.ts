@@ -4,17 +4,29 @@ import {
   SlackMessage,
   SlackBlock,
   ServiceCost,
-  TableRow,
-  RichTextCell,
   UnusedResource,
+  RichTextCell,
+  TableRow,
 } from "../types";
 import { formatCurrency, formatPercentDisplay } from "../utils/formatter";
 import { formatDateDisplay } from "../utils/date-utils";
 
 const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL || "";
 
-// Helper to create a table cell with text
-function createCell(text: string, bold: boolean = false): RichTextCell {
+// Helper to format region name for display
+function formatRegion(region: string): string {
+  if (!region || region === "global") return "Global";
+  return region;
+}
+
+// Helper to truncate service name for table display
+function truncateServiceName(name: string, maxLen: number = 20): string {
+  if (name.length <= maxLen) return name;
+  return name.substring(0, maxLen - 2) + "..";
+}
+
+// Helper to create a rich text cell for Block Kit table
+function createTextCell(text: string, bold: boolean = false): RichTextCell {
   return {
     type: "rich_text",
     elements: [
@@ -24,7 +36,7 @@ function createCell(text: string, bold: boolean = false): RichTextCell {
           {
             type: "text",
             text: text,
-            style: bold ? { bold: true } : undefined,
+            ...(bold && { style: { bold: true } }),
           },
         ],
       },
@@ -32,145 +44,177 @@ function createCell(text: string, bold: boolean = false): RichTextCell {
   };
 }
 
-// Helper to format region name for display
-function formatRegion(region: string): string {
-  if (!region || region === "global") return "Global";
-  return region;
+// Helper to create a table row from an array of strings
+function createTableRow(cells: string[], bold: boolean = false): TableRow {
+  return cells.map((text) => createTextCell(text, bold));
 }
 
-// Build weekly services table using Slack's native table block
+// Build weekly services table using native Slack Block Kit table format
 function buildWeeklyServiceTable(
   currentServices: ServiceCost[],
   previousServices: ServiceCost[],
   totalCost: number,
+  isOrganizationMode: boolean = false,
 ): SlackBlock {
-  // Create a map of previous week costs for comparison (key: service+region)
+  // Create a map of previous week costs for comparison (key: service+account)
   const prevCostMap = new Map<string, number>();
   previousServices.forEach((s) => {
-    const key = `${s.service}|${s.region || "global"}`;
+    const key = `${s.service}|${s.accountId || ""}`;
     prevCostMap.set(key, s.cost);
   });
 
-  // Header row with Region column
-  const headerRow: TableRow = [
-    createCell("#", true),
-    createCell("Service", true),
-    createCell("Region", true),
-    createCell("Cost", true),
-    createCell("Forecast", true),
-    createCell("Share", true),
-    createCell("Trend", true),
-  ];
+  // Build table rows
+  const tableRows: TableRow[] = [];
+
+  // Header row
+  const headerCells = isOrganizationMode
+    ? ["#", "Service", "Cost", "Forecast", "Share", "Trend", "Account ID", "Region"]
+    : ["#", "Service", "Cost", "Forecast", "Share", "Trend", "Region"];
+  tableRows.push(createTableRow(headerCells, true));
 
   // Data rows
-  const dataRows: TableRow[] = currentServices.map((s, i) => {
+  currentServices.forEach((s, i) => {
     const share = `${((s.cost / totalCost) * 100).toFixed(1)}%`;
 
-    // Calculate trend using service+region key
-    const key = `${s.service}|${s.region || "global"}`;
+    // Calculate trend
+    const key = `${s.service}|${s.accountId || ""}`;
     const prevCost = prevCostMap.get(key) || 0;
     let trend = "NEW";
     if (prevCost > 0) {
       const change = ((s.cost - prevCost) / prevCost) * 100;
-      if (change > 0) trend = `+${change.toFixed(0)}%`;
-      else if (change < 0) trend = `${change.toFixed(0)}%`;
-      else trend = "0%";
+      if (change > 0) trend = `↑+${change.toFixed(0)}%`;
+      else if (change < 0) trend = `↓${change.toFixed(0)}%`;
+      else trend = "→0%";
     }
 
-    return [
-      createCell(String(i + 1)),
-      createCell(s.service),
-      createCell(formatRegion(s.region || "")),
-      createCell(formatCurrency(s.cost)),
-      createCell(s.forecast ? formatCurrency(s.forecast) : "-"),
-      createCell(share),
-      createCell(trend),
-    ];
+    const forecast = s.forecast ? formatCurrency(s.forecast) : "-";
+    const serviceName = truncateServiceName(s.service, 25);
+    const costStr = formatCurrency(s.cost);
+    const region = formatRegion(s.region || "");
+
+    const rowCells = isOrganizationMode
+      ? [
+          String(i + 1),
+          serviceName,
+          costStr,
+          forecast,
+          share,
+          trend,
+          s.accountId || "-",
+          region,
+        ]
+      : [String(i + 1), serviceName, costStr, forecast, share, trend, region];
+
+    tableRows.push(createTableRow(rowCells, false));
   });
 
   return {
     type: "table",
-    rows: [headerRow, ...dataRows],
+    rows: tableRows,
   };
 }
 
-// Build monthly services table using Slack's native table block
+// Build monthly services table using native Slack Block Kit table format
 function buildMonthlyServiceTable(
   services: ServiceCost[],
   totalCost: number,
   daysElapsed: number,
   budget: number,
+  isOrganizationMode: boolean = false,
 ): SlackBlock {
-  // Header row with Region column
-  const headerRow: TableRow = [
-    createCell("#", true),
-    createCell("Service", true),
-    createCell("Region", true),
-    createCell("Cost", true),
-    createCell("Daily Avg", true),
-    createCell("Share", true),
-    createCell("Budget%", true),
-  ];
+  // Build table rows
+  const tableRows: TableRow[] = [];
+
+  // Header row
+  const headerCells = isOrganizationMode
+    ? ["#", "Service", "Cost", "Daily Avg", "Share", "Budget%", "Account ID", "Region"]
+    : ["#", "Service", "Cost", "Daily Avg", "Share", "Budget%", "Region"];
+  tableRows.push(createTableRow(headerCells, true));
 
   // Data rows
-  const dataRows: TableRow[] = services.map((s, i) => {
+  services.forEach((s, i) => {
     const dailyAvg = formatCurrency(s.cost / Math.max(1, daysElapsed));
     const share = `${((s.cost / totalCost) * 100).toFixed(1)}%`;
     const budgetPct = `${((s.cost / budget) * 100).toFixed(1)}%`;
+    const serviceName = truncateServiceName(s.service, 25);
+    const costStr = formatCurrency(s.cost);
+    const region = formatRegion(s.region || "");
 
-    return [
-      createCell(String(i + 1)),
-      createCell(s.service),
-      createCell(formatRegion(s.region || "")),
-      createCell(formatCurrency(s.cost)),
-      createCell(dailyAvg),
-      createCell(share),
-      createCell(budgetPct),
-    ];
+    const rowCells = isOrganizationMode
+      ? [
+          String(i + 1),
+          serviceName,
+          costStr,
+          dailyAvg,
+          share,
+          budgetPct,
+          s.accountId || "-",
+          region,
+        ]
+      : [
+          String(i + 1),
+          serviceName,
+          costStr,
+          dailyAvg,
+          share,
+          budgetPct,
+          region,
+        ];
+
+    tableRows.push(createTableRow(rowCells, false));
   });
 
   return {
     type: "table",
-    rows: [headerRow, ...dataRows],
+    rows: tableRows,
   };
 }
 
-// Build unused resources table using Slack's native table block
+// Build unused resources table using native Slack Block Kit table format
 function buildUnusedResourcesTable(
   unusedResources: UnusedResource[],
 ): SlackBlock {
+  const tableRows: TableRow[] = [];
+
+  // Detect org mode: show account info if any resource has it
+  const isOrgMode = unusedResources.some((r) => r.accountId);
+
   // Header row
-  const headerRow: TableRow = [
-    createCell("#", true),
-    createCell("Service", true),
-    createCell("Resource", true),
-    createCell("Region", true),
-    createCell("Reason", true),
-  ];
+  const headerCells = isOrgMode
+    ? ["#", "Service", "Resource", "Region", "Reason", "Account ID"]
+    : ["#", "Service", "Resource", "Region", "Reason"];
+  tableRows.push(createTableRow(headerCells, true));
 
   // Data rows (limit to 10 for readability)
-  const dataRows: TableRow[] = unusedResources.slice(0, 10).map((r, i) => {
-    // Truncate resource name/id if too long
+  const limitToUnusedCount = Number(process.env.UNUSED_SERVICES_COUNT || 40);
+  unusedResources.slice(0, limitToUnusedCount).forEach((r, i) => {
     const resourceDisplay = r.resourceName
-      ? r.resourceName.length > 20
-        ? r.resourceName.substring(0, 17) + "..."
+      ? r.resourceName.length > 25
+        ? r.resourceName.substring(0, 22) + "..."
         : r.resourceName
-      : r.resourceId.length > 20
-        ? r.resourceId.substring(0, 17) + "..."
+      : r.resourceId.length > 25
+        ? r.resourceId.substring(0, 22) + "..."
         : r.resourceId;
 
-    return [
-      createCell(String(i + 1)),
-      createCell(r.service),
-      createCell(resourceDisplay),
-      createCell(formatRegion(r.region)),
-      createCell(r.reason),
-    ];
+    const region = formatRegion(r.region);
+
+    const rowCells = isOrgMode
+      ? [
+          String(i + 1),
+          r.service,
+          resourceDisplay,
+          region,
+          r.reason,
+          r.accountId || "-",
+        ]
+      : [String(i + 1), r.service, resourceDisplay, region, r.reason];
+
+    tableRows.push(createTableRow(rowCells, false));
   });
 
   return {
     type: "table",
-    rows: [headerRow, ...dataRows],
+    rows: tableRows,
   };
 }
 
@@ -237,8 +281,18 @@ export async function sendSlackMessage(message: SlackMessage): Promise<void> {
   });
 
   if (!response.ok) {
-    throw new Error(`Slack API returned status ${response.status}`);
+    const errorBody = await response.text();
+    console.error("Slack API error response:", errorBody);
+    console.error("Message payload:", JSON.stringify(message, null, 2));
+    throw new Error(
+      `Slack API returned status ${response.status}: ${errorBody}`,
+    );
   }
+}
+
+// Helper to format account display (parent/management account ID)
+function formatAccountDisplay(accountId: string): string {
+  return accountId;
 }
 
 export function buildWeeklyReportMessage(data: WeeklyReportData): SlackMessage {
@@ -256,11 +310,24 @@ export function buildWeeklyReportMessage(data: WeeklyReportData): SlackMessage {
       fields: [
         {
           type: "mrkdwn",
-          text: `*Total Spend:*\n${formatCurrency(data.currentWeek.totalCost)}`,
+          text: `*Account:*\n${formatAccountDisplay(data.accountId)}`,
         },
         {
           type: "mrkdwn",
           text: `*Period:*\n${formatDateDisplay(data.currentWeek.startDate)} - ${formatDateDisplay(data.currentWeek.endDate)}`,
+        },
+      ],
+    },
+    {
+      type: "section",
+      fields: [
+        {
+          type: "mrkdwn",
+          text: `*Total Spend:*\n${formatCurrency(data.currentWeek.totalCost)}`,
+        },
+        {
+          type: "mrkdwn",
+          text: `*Previous Week:*\n${formatCurrency(data.previousWeek.totalCost)}`,
         },
       ],
     },
@@ -275,7 +342,7 @@ export function buildWeeklyReportMessage(data: WeeklyReportData): SlackMessage {
     type: "section",
     text: {
       type: "mrkdwn",
-      text: `*Week-over-Week Change:* ${changeEmoji} ${formatPercentDisplay(data.percentChange)} (Previous: ${formatCurrency(data.previousWeek.totalCost)})`,
+      text: `*Week-over-Week Change:* ${changeEmoji} ${formatPercentDisplay(data.percentChange)}`,
     },
   });
 
@@ -302,12 +369,26 @@ export function buildWeeklyReportMessage(data: WeeklyReportData): SlackMessage {
     },
   });
 
+  // Add organization mode indicator if enabled
+  if (data.isOrganizationMode && data.currentWeek.accountCount) {
+    blocks.push({
+      type: "context",
+      elements: [
+        {
+          type: "mrkdwn",
+          text: `:office: _Organization Mode: Costs aggregated across ${data.currentWeek.accountCount} linked accounts_`,
+        },
+      ],
+    });
+  }
+
   // Add service table
   if (data.currentWeek.topServices.length > 0) {
     const serviceTable = buildWeeklyServiceTable(
       data.currentWeek.topServices,
       data.previousWeek.topServices,
       data.currentWeek.totalCost,
+      data.isOrganizationMode,
     );
     blocks.push(serviceTable);
 
@@ -322,12 +403,6 @@ export function buildWeeklyReportMessage(data: WeeklyReportData): SlackMessage {
       ],
     });
   }
-
-  // Add unused resources section (always show - even if 0 found)
-  const unusedBlocks = buildUnusedResourcesSection(
-    data.currentWeek.unusedResources || [],
-  );
-  blocks.push(...unusedBlocks);
 
   return { blocks };
 }
@@ -369,6 +444,19 @@ export function buildMonthlyReportMessage(
       fields: [
         {
           type: "mrkdwn",
+          text: `*Account:*\n${formatAccountDisplay(data.accountId)}`,
+        },
+        {
+          type: "mrkdwn",
+          text: `*Month:*\n${data.month} ${data.year}`,
+        },
+      ],
+    },
+    {
+      type: "section",
+      fields: [
+        {
+          type: "mrkdwn",
           text: `*Month-to-Date:*\n${formatCurrency(data.monthToDate.totalCost)}`,
         },
         {
@@ -382,11 +470,11 @@ export function buildMonthlyReportMessage(
       fields: [
         {
           type: "mrkdwn",
-          text: `*Month:*\n${data.month} ${data.year}`,
+          text: `*Budget:*\n${formatCurrency(data.budget)}`,
         },
         {
           type: "mrkdwn",
-          text: `*Budget:*\n${formatCurrency(data.budget)}`,
+          text: `*Budget Used:*\n${budgetUsedPct}%`,
         },
       ],
     },
@@ -395,20 +483,13 @@ export function buildMonthlyReportMessage(
       fields: [
         {
           type: "mrkdwn",
-          text: `*Budget Used:*\n${budgetUsedPct}%`,
+          text: `*Days Elapsed:*\n${daysElapsed} days`,
         },
         {
           type: "mrkdwn",
-          text: `*Days Elapsed:*\n${daysElapsed} days`,
+          text: `*Budget Status:*\n${budgetEmoji} ${budgetStatus}`,
         },
       ],
-    },
-    {
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `*Budget Status:* ${budgetEmoji} ${budgetStatus}`,
-      },
     },
   ];
 
@@ -435,6 +516,19 @@ export function buildMonthlyReportMessage(
     },
   });
 
+  // Add organization mode indicator if enabled
+  if (data.isOrganizationMode && data.monthToDate.accountCount) {
+    blocks.push({
+      type: "context",
+      elements: [
+        {
+          type: "mrkdwn",
+          text: `:office: _Organization Mode: Costs aggregated across ${data.monthToDate.accountCount} linked accounts_`,
+        },
+      ],
+    });
+  }
+
   // Add service table
   if (data.monthToDate.topServices.length > 0) {
     const serviceTable = buildMonthlyServiceTable(
@@ -442,6 +536,7 @@ export function buildMonthlyReportMessage(
       data.monthToDate.totalCost,
       daysElapsed,
       data.budget,
+      data.isOrganizationMode,
     );
     blocks.push(serviceTable);
 
@@ -457,11 +552,24 @@ export function buildMonthlyReportMessage(
     });
   }
 
-  // Add unused resources section (always show - even if 0 found)
-  const unusedBlocks = buildUnusedResourcesSection(
-    data.monthToDate.unusedResources || [],
-  );
-  blocks.push(...unusedBlocks);
+  return { blocks };
+}
+
+// Build a standalone Slack message for unused resources
+export function buildUnusedResourcesMessage(
+  unusedResources: UnusedResource[],
+): SlackMessage {
+  const blocks: SlackBlock[] = [
+    {
+      type: "header",
+      text: {
+        type: "plain_text",
+        text: "AWS Unused Resources Report",
+        emoji: true,
+      },
+    },
+    ...buildUnusedResourcesSection(unusedResources),
+  ];
 
   return { blocks };
 }
@@ -469,6 +577,11 @@ export function buildMonthlyReportMessage(
 export async function sendWeeklyReport(data: WeeklyReportData): Promise<void> {
   const message = buildWeeklyReportMessage(data);
   await sendSlackMessage(message);
+
+  const unusedMessage = buildUnusedResourcesMessage(
+    data.currentWeek.unusedResources || [],
+  );
+  await sendSlackMessage(unusedMessage);
 }
 
 export async function sendMonthlyReport(
@@ -476,4 +589,9 @@ export async function sendMonthlyReport(
 ): Promise<void> {
   const message = buildMonthlyReportMessage(data);
   await sendSlackMessage(message);
+
+  const unusedMessage = buildUnusedResourcesMessage(
+    data.monthToDate.unusedResources || [],
+  );
+  await sendSlackMessage(unusedMessage);
 }

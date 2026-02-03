@@ -1,0 +1,115 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Cross-account IAM role for AWS Cost Alerts unused resource scanning.
+  Deploy this template in each child/member account (via StackSets or manually)
+  to allow the parent account Lambda to scan resources.
+
+Parameters:
+  ManagementAccountId:
+    Type: String
+    Description: The AWS Account ID of the management/parent account where the Cost Alerts Lambda runs
+    AllowedPattern: "^[0-9]{12}$"
+    ConstraintDescription: Must be a valid 12-digit AWS Account ID
+  RoleName:
+    Type: String
+    Description: Name of the IAM role to create (must match CrossAccountRoleName in the main template)
+    Default: CostAlertsReadRole
+
+Resources:
+  CostAlertsReadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref RoleName
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${ManagementAccountId}:root"
+            Action: sts:AssumeRole
+            Condition:
+              StringLike:
+                aws:PrincipalArn:
+                  - !Sub "arn:aws:iam::${ManagementAccountId}:role/cloud-cost-alerts-CostReporterFunctionRole-*"
+      Policies:
+        - PolicyName: CostAlertsReadPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CloudWatchMetricsAccess
+                Effect: Allow
+                Action:
+                  - cloudwatch:GetMetricStatistics
+                  - cloudwatch:GetMetricData
+                Resource: "*"
+              - Sid: EC2DescribeAccess
+                Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                  - ec2:DescribeVolumes
+                  - ec2:DescribeRegions
+                  - ec2:DescribeAddresses
+                  - ec2:DescribeNatGateways
+                  - ec2:DescribeSnapshots
+                Resource: "*"
+              - Sid: RDSDescribeAccess
+                Effect: Allow
+                Action:
+                  - rds:DescribeDBInstances
+                  - rds:DescribeDBSnapshots
+                  - rds:DescribeDBClusters
+                  - rds:DescribeDBClusterSnapshots
+                Resource: "*"
+              - Sid: ELBDescribeAccess
+                Effect: Allow
+                Action:
+                  - elasticloadbalancing:DescribeLoadBalancers
+                Resource: "*"
+              - Sid: EFSDescribeAccess
+                Effect: Allow
+                Action:
+                  - elasticfilesystem:DescribeFileSystems
+                Resource: "*"
+              - Sid: EKSDescribeAccess
+                Effect: Allow
+                Action:
+                  - eks:ListClusters
+                  - eks:DescribeCluster
+                Resource: "*"
+              - Sid: ECSDescribeAccess
+                Effect: Allow
+                Action:
+                  - ecs:ListClusters
+                  - ecs:ListServices
+                  - ecs:DescribeServices
+                Resource: "*"
+              - Sid: ElastiCacheDescribeAccess
+                Effect: Allow
+                Action:
+                  - elasticache:DescribeCacheClusters
+                Resource: "*"
+              - Sid: RedshiftDescribeAccess
+                Effect: Allow
+                Action:
+                  - redshift:DescribeClusters
+                Resource: "*"
+              - Sid: OpenSearchDescribeAccess
+                Effect: Allow
+                Action:
+                  - es:ListDomainNames
+                  - es:DescribeDomain
+                Resource: "*"
+              - Sid: BackupDescribeAccess
+                Effect: Allow
+                Action:
+                  - backup:ListBackupVaults
+                  - backup:ListRecoveryPointsByBackupVault
+                Resource: "*"
+
+Outputs:
+  RoleArn:
+    Description: ARN of the cross-account role
+    Value: !GetAtt CostAlertsReadRole.Arn
+  RoleName:
+    Description: Name of the cross-account role
+    Value: !Ref CostAlertsReadRole

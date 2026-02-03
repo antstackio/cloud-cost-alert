@@ -1,6 +1,6 @@
 import { Context } from 'aws-lambda';
 import { ReportEvent, WeeklyReportData, MonthlyReportData } from '../types';
-import { getCosts, getCostForecast } from '../services/cost-explorer';
+import { getCosts, getCostForecast, getAccountId, shouldUseOrganizationMode } from '../services/cost-explorer';
 import { detectUnusedResources } from '../services/unused-resources';
 import { sendWeeklyReport, sendMonthlyReport } from '../services/slack';
 import {
@@ -22,11 +22,16 @@ async function generateWeeklyReport(): Promise<void> {
   const currentWeekRange = getWeekDateRange();
   const previousWeekRange = getPreviousWeekDateRange();
 
-  // Fetch costs and detect unused resources in parallel
-  const [currentWeekCosts, previousWeekCosts, unusedResources] = await Promise.all([
-    getCosts(currentWeekRange, true), // Include forecasts for weekly report
-    getCosts(previousWeekRange),
+  // Check if organization mode should be enabled
+  const useOrgMode = shouldUseOrganizationMode();
+  console.log(`Organization mode: ${useOrgMode ? 'enabled' : 'disabled'}`);
+
+  // Fetch costs, detect unused resources, and get account ID in parallel
+  const [currentWeekCosts, previousWeekCosts, unusedResources, accountId] = await Promise.all([
+    getCosts(currentWeekRange, { includeForecasts: true, groupByAccount: useOrgMode }),
+    getCosts(previousWeekRange, { groupByAccount: useOrgMode }),
     detectUnusedResources(currentWeekRange),
+    getAccountId(),
   ]);
 
   // Attach unused resources to current week data
@@ -44,6 +49,8 @@ async function generateWeeklyReport(): Promise<void> {
     previousWeek: previousWeekCosts,
     percentChange,
     isAnomaly,
+    accountId,
+    isOrganizationMode: useOrgMode,
   };
 
   console.log('Weekly report data:', JSON.stringify(reportData, null, 2));
@@ -59,11 +66,16 @@ async function generateMonthlyReport(): Promise<void> {
   const monthToDateRange = getMonthToDateRange();
   const forecastRange = getForecastDateRange();
 
-  // Fetch costs, forecast, and detect unused resources in parallel
-  const [monthToDateCosts, forecast, unusedResources] = await Promise.all([
-    getCosts(monthToDateRange),
+  // Check if organization mode should be enabled
+  const useOrgMode = shouldUseOrganizationMode();
+  console.log(`Organization mode: ${useOrgMode ? 'enabled' : 'disabled'}`);
+
+  // Fetch costs, forecast, detect unused resources, and get account ID in parallel
+  const [monthToDateCosts, forecast, unusedResources, accountId] = await Promise.all([
+    getCosts(monthToDateRange, { groupByAccount: useOrgMode }),
     getCostForecast(forecastRange),
     detectUnusedResources(monthToDateRange),
+    getAccountId(),
   ]);
 
   // Attach unused resources to month-to-date data
@@ -79,6 +91,8 @@ async function generateMonthlyReport(): Promise<void> {
     isOverBudget,
     month: getCurrentMonthName(),
     year: getCurrentYear(),
+    accountId,
+    isOrganizationMode: useOrgMode,
   };
 
   console.log('Monthly report data:', JSON.stringify(reportData, null, 2));
